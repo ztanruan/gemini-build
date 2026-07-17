@@ -1,0 +1,62 @@
+# Grok Build using Gemini on GCP project smoothiesdeliveryv1 (Vertex AI).
+# Installed to ~/.grok/config.toml by install.sh.
+#
+# Region defaults to us-central1. To use another region, replace us-central1
+# everywhere below (or use the "global" endpoint: host aiplatform.googleapis.com
+# and locations/global).
+#
+# Model list current as of July 2026. Gemini 2.0 was shut down (Jun 2026);
+# Gemini 2.5 retires Oct 16 2026 — the 3.x models below are the current GA line.
+
+# --- Auth: mint short-lived GCP tokens from your gcloud login ----------------
+[auth]
+auth_provider_command = "~/.grok/gcp-token.sh"
+auth_provider_label   = "Google Cloud (Vertex AI)"
+auth_token_ttl        = 3300
+
+# --- Which model a new session starts on -------------------------------------
+[models]
+default = "gemini-3.1-pro"
+
+# --- Models you can switch between in the terminal (/model, /m, Ctrl+M) -------
+# No api_key/env_key on purpose: Grok then uses the GCP token from the auth
+# provider above as the Bearer credential for these Vertex endpoints.
+
+[model.gemini-3.1-pro]
+model          = "google/gemini-3.1-pro"
+base_url       = "https://us-central1-aiplatform.googleapis.com/v1beta1/projects/smoothiesdeliveryv1/locations/us-central1/endpoints/openapi"
+name           = "Gemini 3.1 Pro (Vertex)"
+api_backend    = "chat_completions"
+context_window = 1048576
+max_completion_tokens = 65536
+
+[model.gemini-3.5-flash]
+model          = "google/gemini-3.5-flash"
+base_url       = "https://us-central1-aiplatform.googleapis.com/v1beta1/projects/smoothiesdeliveryv1/locations/us-central1/endpoints/openapi"
+name           = "Gemini 3.5 Flash (Vertex)"
+api_backend    = "chat_completions"
+context_window = 1048576
+max_completion_tokens = 65536
+
+[model.gemini-3.1-flash-lite]
+model          = "google/gemini-3.1-flash-lite"
+base_url       = "https://us-central1-aiplatform.googleapis.com/v1beta1/projects/smoothiesdeliveryv1/locations/us-central1/endpoints/openapi"
+name           = "Gemini 3.1 Flash-Lite (Vertex)"
+api_backend    = "chat_completions"
+context_window = 1048576
+
+# Legacy: still works until it retires on 2026-10-16. Remove after that.
+[model.gemini-2.5-pro]
+model          = "google/gemini-2.5-pro"
+base_url       = "https://us-central1-aiplatform.googleapis.com/v1beta1/projects/smoothiesdeliveryv1/locations/us-central1/endpoints/openapi"
+name           = "Gemini 2.5 Pro (Vertex, retires Oct 2026)"
+api_backend    = "chat_completions"
+context_window = 1048576
+max_completion_tokens = 65536
+
+# --- Turn off xAI-specific background calls you no longer need ---------------
+[cli]
+auto_update = false
+
+[features]
+telemetry = false
