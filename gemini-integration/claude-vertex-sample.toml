@@ -1,0 +1,40 @@
+# EXPERIMENTAL — Claude (Anthropic) on Vertex AI via the patched `messages` backend.
+#
+# STATUS: implemented + unit-tested (URL/body/auth transforms), but NOT yet
+# live-verified end-to-end, because Claude models 404 until you enable them in
+# Vertex Model Garden (accept Anthropic's terms in the Cloud Console). Once
+# enabled, run a multi-turn tool task to verify streaming + tool_use.
+#
+# How it works: the patched client detects the Vertex host and switches the
+# Anthropic messages path to Vertex's shape — POST to
+#   {base_url}/{model}:streamRawPredict
+# injecting {"anthropic_version":"vertex-2023-10-16"} and dropping `model` from
+# the body (it lives in the URL). Auth is Authorization: Bearer <gcloud token>
+# (AuthScheme default is Bearer), supplied by the token bridge below — NO api_key.
+#
+# Claude is only served in specific regions (e.g. us-east5, europe-west1), NOT
+# `global`. Pick a Claude-supported region and set it in base_url + the id.
+
+disable_web_search = true
+
+[auth]
+auth_provider_command = "~/.grok/gcp-token.sh"
+auth_provider_label   = "Google Cloud (Vertex AI)"
+auth_token_ttl        = 3300
+
+[models]
+default = "claude-sonnet-4-5"
+
+[model."claude-sonnet-4-5"]
+model          = "claude-sonnet-4-5@20250929"    # versioned id goes in the URL
+base_url       = "https://us-east5-aiplatform.googleapis.com/v1/projects/PROJECT_ID/locations/us-east5/publishers/anthropic/models"
+name           = "Claude Sonnet 4.5 (Vertex, experimental)"
+api_backend    = "messages"
+context_window = 200000
+max_completion_tokens = 8192
+
+[cli]
+auto_update = false
+
+[features]
+telemetry = false

@@ -46,7 +46,37 @@ new `SOURCE_REV`). To move the fork forward:
 5. Rebuild and re-run the live check (patched binary + a Gemini 3.x multi-step
    tool task) — see `docs/superpowers/plans/2026-07-18-vertex-adapter-patch.md` Task 5.
 
-## Not yet done (future E work)
+## Provider status
+
+| Provider | Backend | Status | Notes |
+|----------|---------|--------|-------|
+| Gemini 2.5 (pro/flash/lite) | chat_completions | ✅ verified live | us-central1 or global |
+| Gemini 3.x (3.1-pro-preview, 3.5-flash, …) | chat_completions | ✅ verified live | **global only**; needs the patch |
+| Claude (Sonnet/Opus) on Vertex | messages | 🧪 experimental, unit-tested | see `claude-vertex-sample.toml`; enable in Model Garden first |
+| Other OpenAI-compat Vertex models | chat_completions | ⚪ untested | should work by config |
+
+## Correctness behaviors added by the patch
+
+- **thought_signature is gated to Gemini** (`client.rs` `apply_defaults` + `is_gemini_model`).
+  It is captured/echoed for Gemini (required for 3.x tool loops) and **stripped** from
+  requests to any non-Gemini chat_completions endpoint, so a mid-session model switch
+  never leaks it. Tests: `apply_defaults_gates_thought_signature_to_gemini`, `gemini_model_detection`.
+- **Safety/content-filter blocks are surfaced** (`stream/chat_completions.rs`). A Gemini/Vertex
+  response with `finish_reason=content_filter` and no content now sets `stop_message`
+  (consumed by the shell as a refusal explanation, `turn.rs:2067`) instead of a silent
+  empty turn that would stall the agent loop. Test: `content_filter_block_sets_stop_message`.
+- **Claude-on-Vertex dialect** (`client.rs`): the `messages` backend auto-switches to
+  Vertex's `streamRawPredict` + `anthropic_version` shape when the base_url is an
+  `aiplatform.googleapis.com` host. Tests: `vertex_anthropic_*`, `vertexize_body_*`.
+
+## Known limitations / not yet done
+
+- **Claude-on-Vertex is unverified live** — enable a Claude model in Vertex Model Garden
+  (accept Anthropic terms), then run a multi-turn tool task to confirm streaming + tool_use.
+- **Structured output (responseSchema) and multimodal image input are untested** on the
+  Vertex OpenAI-compat layer — they pass through but were not exercised; verify before relying on them.
+- **Vertex-Anthropic detection is by host string** (`is_vertex_anthropic_host`), not an
+  explicit per-model config flag. It is correct and zero-config; promoting it to a config
+  field was deferred (it would touch ~26 `SamplerConfig` construction sites for no behavior change).
 - Source rebrand (binary/product strings) — deferred until a product name is chosen.
 - CI matrix for macOS/Linux release binaries + a hosted `install.sh` one-liner.
-- Claude-on-Vertex **live** verification (needs a Model-Garden-enabled Claude model).

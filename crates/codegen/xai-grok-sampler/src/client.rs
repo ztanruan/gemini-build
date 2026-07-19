@@ -59,6 +59,14 @@ pub(crate) fn vertex_anthropic_endpoint(base_url: &str, model: &str, stream: boo
     format!("{base}/{model}:{verb}")
 }
 
+/// True when a chat_completions model is Gemini (the only provider that emits
+/// and requires `thought_signature`). Used to gate the echo so the opaque
+/// field never leaks to a non-Gemini endpoint (OpenAI/xAI) after a model switch.
+pub(crate) fn is_gemini_model(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    m.starts_with("google/") || m.contains("gemini")
+}
+
 /// Rewrite an Anthropic Messages body for Vertex: drop the `model` field (it
 /// lives in the URL) and inject the required `anthropic_version`.
 pub(crate) fn vertexize_messages_body(mut body: serde_json::Value) -> serde_json::Value {
@@ -810,6 +818,18 @@ impl SamplingClient {
     fn apply_defaults(&self, mut request: ChatCompletionRequest) -> Result<ChatCompletionRequest> {
         if request.model.is_none() {
             request.model = Some(self.defaults.model.clone());
+        }
+
+        // `thought_signature` is Gemini-only. Strip it from any tool call when
+        // the target model isn't Gemini, so a Gemini-originated signature can
+        // never be echoed to a non-Gemini chat_completions endpoint after a
+        // mid-session model switch.
+        if !request.model.as_deref().map(is_gemini_model).unwrap_or(false) {
+            for msg in &mut request.messages {
+                for tc in &mut msg.tool_calls {
+                    tc.extra_content = None;
+                }
+            }
         }
 
         if request.max_tokens.is_none() {
@@ -2828,5 +2848,50 @@ mod tests {
         assert_eq!(out["anthropic_version"], "vertex-2023-10-16");
         assert_eq!(out["max_tokens"], 100);
         assert!(out.get("messages").is_some());
+    }
+
+    #[test]
+    fn gemini_model_detection() {
+        assert!(is_gemini_model("google/gemini-2.5-pro"));
+        assert!(is_gemini_model("gemini-3.1-pro-preview"));
+        assert!(!is_gemini_model("gpt-4o"));
+        assert!(!is_gemini_model("claude-sonnet-4-5"));
+        assert!(!is_gemini_model("grok-build"));
+    }
+
+    #[test]
+    fn apply_defaults_gates_thought_signature_to_gemini() {
+        use xai_grok_sampling_types::{ChatRequestMessage, ToolCallRequest};
+        let msg_with_sig = || {
+            let mut m = ChatRequestMessage::system("");
+            m.tool_calls = vec![ToolCallRequest::function("f", "{}")
+                .with_thought_signature(Some("SIG".to_string()))];
+            m
+        };
+        // Non-Gemini target: the Gemini-only field must be stripped.
+        let mut cfg = minimal_config();
+        cfg.model = "gpt-4o".to_string();
+        let client = SamplingClient::new(cfg).unwrap();
+        let out = client
+            .apply_defaults(ChatCompletionRequest::new("gpt-4o", vec![msg_with_sig()]))
+            .unwrap();
+        assert!(
+            out.messages[0].tool_calls[0].extra_content.is_none(),
+            "thought_signature must not be echoed to a non-Gemini endpoint"
+        );
+        // Gemini target: the field is preserved (required for 3.x tool loops).
+        let mut cfg2 = minimal_config();
+        cfg2.model = "google/gemini-2.5-pro".to_string();
+        let client2 = SamplingClient::new(cfg2).unwrap();
+        let out2 = client2
+            .apply_defaults(ChatCompletionRequest::new(
+                "google/gemini-2.5-pro",
+                vec![msg_with_sig()],
+            ))
+            .unwrap();
+        assert!(
+            out2.messages[0].tool_calls[0].extra_content.is_some(),
+            "thought_signature must be preserved for Gemini"
+        );
     }
 }

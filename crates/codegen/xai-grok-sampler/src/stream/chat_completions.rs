@@ -269,6 +269,23 @@ pub fn stream_chat_completions<'a>(
             finish_reason = Some(StopReason::ToolCalls);
         }
 
+        // Surface a safety/content-filter block. Gemini and Vertex apply
+        // safety filters that return `finish_reason=content_filter` with empty
+        // content; without this the agent loop sees a silent empty turn and
+        // spins or stops for no visible reason. Give it a clear stop_message.
+        let stop_message = if matches!(finish_reason, Some(StopReason::ContentFilter))
+            && content_acc.is_empty()
+            && tool_calls.is_empty()
+        {
+            Some(
+                "Response was blocked by the model provider's content safety filter \
+                 (finish_reason=content_filter). No content was returned."
+                    .to_string(),
+            )
+        } else {
+            None
+        };
+
         // Build the trailing Assistant + any reasoning sibling.
         let mut items: Vec<ConversationItem> = Vec::new();
         if first_choice_seen {
@@ -300,7 +317,7 @@ pub fn stream_chat_completions<'a>(
             cost_usd_ticks,
             message_chunks_emitted: message_chunk_count,
             doom_loop_signals: Vec::new(),
-            stop_message: None,
+            stop_message,
         };
 
         yield SamplingEvent::Completed {
@@ -834,5 +851,33 @@ mod tests {
             .and_then(|tc| tc.thought_signature.as_deref())
             .map(str::to_string);
         assert_eq!(sig.as_deref(), Some("SIG"));
+    }
+
+    #[tokio::test]
+    async fn content_filter_block_sets_stop_message() {
+        // A safety-filtered response: a choice with finish_reason=content_filter
+        // and no content. Must surface a stop_message, not a silent empty turn.
+        let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> =
+            vec![Ok(final_chunk(FinishReason::ContentFilter))];
+        let raw = stream::iter(chunks).boxed();
+        let events = collect(stream_chat_completions(
+            raw,
+            None,
+            rid(),
+            Duration::from_secs(60),
+        ))
+        .await;
+        let msg = events
+            .iter()
+            .find_map(|e| match e {
+                SamplingEvent::Completed { response, .. } => Some(response.stop_message.clone()),
+                _ => None,
+            })
+            .flatten()
+            .unwrap_or_default();
+        assert!(
+            msg.to_lowercase().contains("safety filter"),
+            "content_filter block must set a stop_message, got: {msg:?}"
+        );
     }
 }

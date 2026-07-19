@@ -3609,6 +3609,21 @@ pub struct ConfigModelOverride {
     pub show_model_fingerprint: Option<bool>,
     pub stream_tool_calls: Option<bool>,
 }
+/// Infer the wire backend from a model id / base_url when the user didn't set
+/// `api_backend`. Claude (Anthropic, including Vertex Model Garden) speaks the
+/// Messages API; everything else keeps the Chat Completions default. Returns
+/// `None` to leave the default in place.
+fn infer_api_backend(model: &str, base_url: &str) -> Option<ApiBackend> {
+    let m = model.to_ascii_lowercase();
+    let u = base_url.to_ascii_lowercase();
+    if m.contains("claude") || u.contains("publishers/anthropic") || u.contains("api.anthropic.com")
+    {
+        Some(ApiBackend::Messages)
+    } else {
+        None
+    }
+}
+
 impl ConfigModelOverride {
     pub(crate) fn apply(
         &self,
@@ -3643,6 +3658,14 @@ impl ConfigModelOverride {
         }
         if let Some(ref v) = self.api_backend {
             entry.info.api_backend = v.clone();
+        } else if entry.info.api_backend == ApiBackend::default() {
+            // No explicit `api_backend`: infer it from the model id / base_url so
+            // users don't have to know that Claude needs `messages` while Gemini
+            // needs `chat_completions`. Only fills the default; never overrides a
+            // base model's explicitly non-default backend.
+            if let Some(inferred) = infer_api_backend(&entry.info.model, &entry.info.base_url) {
+                entry.info.api_backend = inferred;
+            }
         }
         if !self.extra_headers.is_empty() {
             entry.info.extra_headers = self.extra_headers.clone();
@@ -5745,6 +5768,29 @@ reasoning_effort = "low"
             std::env::remove_var(env_var);
         }
     }
+    #[test]
+    fn infer_api_backend_from_model_id_and_base_url() {
+        // Claude models / Anthropic hosts -> Messages backend.
+        assert_eq!(
+            infer_api_backend("claude-sonnet-4-5", ""),
+            Some(ApiBackend::Messages)
+        );
+        assert_eq!(
+            infer_api_backend(
+                "claude-sonnet-4-5@20250929",
+                "https://us-east5-aiplatform.googleapis.com/v1/projects/p/locations/us-east5/publishers/anthropic/models"
+            ),
+            Some(ApiBackend::Messages)
+        );
+        assert_eq!(
+            infer_api_backend("some-model", "https://api.anthropic.com/v1"),
+            Some(ApiBackend::Messages)
+        );
+        // Gemini / OpenAI / others keep the Chat Completions default.
+        assert_eq!(infer_api_backend("google/gemini-2.5-pro", "https://x/openapi"), None);
+        assert_eq!(infer_api_backend("gpt-4o", "https://api.openai.com/v1"), None);
+    }
+
     #[test]
     fn proxy_messages_models_use_bearer_auth_scheme() {
         let mut model = test_model_entry(
