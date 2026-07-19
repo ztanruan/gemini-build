@@ -457,6 +457,11 @@ pub struct ToolCall {
     pub name: String,
     /// JSON-encoded arguments
     pub arguments: Arc<str>,
+    /// Gemini-only opaque signature returned on the tool call that MUST be
+    /// echoed back on the next request, or Vertex rejects the follow-up turn
+    /// (HTTP 400). `None` for all other providers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<Arc<str>>,
 }
 
 /// Tool/function definition for the model
@@ -1587,6 +1592,7 @@ impl From<ChatRequestMessage> for ConversationItem {
                         id: Arc::<str>::from(tc.id.unwrap_or_default()),
                         name: tc.function.name,
                         arguments: Arc::<str>::from(tc.function.arguments),
+                        thought_signature: None,
                     })
                     .collect();
 
@@ -1742,8 +1748,10 @@ pub fn conversation_item_to_chat_message(item: ConversationItem) -> ChatRequestM
                 .into_iter()
                 .map(|tc| {
                     let arguments = sanitize_tool_arguments(&tc.id, &tc.name, tc.arguments.clone());
+                    let thought_signature = tc.thought_signature.as_ref().map(|s| s.to_string());
                     ToolCallRequest::function(tc.name, arguments.as_ref().to_owned())
                         .with_id(tc.id.as_ref().to_owned())
+                        .with_thought_signature(thought_signature)
                 })
                 .collect();
 
@@ -1895,6 +1903,7 @@ impl From<ChatResponseMessage> for ConversationItem {
                 id: Arc::<str>::from(tc.id),
                 name: tc.function.name,
                 arguments: Arc::<str>::from(tc.function.arguments),
+                thought_signature: None,
             })
             .collect();
 
@@ -1968,6 +1977,7 @@ pub fn response_to_conversation_items(response: rs::Response) -> Vec<Conversatio
                     id: Arc::<str>::from(fc.call_id),
                     name: fc.name,
                     arguments: Arc::<str>::from(fc.arguments),
+                    thought_signature: None,
                 });
             }
             rs::OutputItem::Reasoning(r) => {
@@ -3306,6 +3316,7 @@ impl From<crate::messages::MessagesResponse> for ConversationItem {
                         arguments: Arc::<str>::from(
                             serde_json::to_string(&input).unwrap_or_default(),
                         ),
+                        thought_signature: None,
                     });
                 }
                 // Thinking dropped — see doc comment above.
@@ -3372,6 +3383,7 @@ mod compaction_item_bridge_tests {
             id: "tc1".into(),
             name: "read_file".into(),
             arguments: "{}".into(),
+            thought_signature: None,
         }]);
         assert_eq!(CompactionItem::text(&tool_only), None);
     }
@@ -3382,6 +3394,7 @@ mod compaction_item_bridge_tests {
             id: "tc1".into(),
             name: "read_file".into(),
             arguments: "{}".into(),
+            thought_signature: None,
         }]);
         assert!(CompactionItem::has_tool_requests(&with_tools));
         assert!(!CompactionItem::has_tool_requests(
@@ -3993,6 +4006,7 @@ mod tests {
             id: "call_abc123".into(),
             name: "read_file".to_string(),
             arguments: r#"{"path": "/foo.txt", "limit": 100}"#.into(),
+            thought_signature: None,
         };
 
         let item = ConversationItem::assistant_tool_calls(vec![tool_call.clone()]);
@@ -4028,16 +4042,19 @@ mod tests {
                 id: "call_1".into(),
                 name: "read_file".to_string(),
                 arguments: r#"{"path": "/a.txt"}"#.into(),
+                thought_signature: None,
             },
             ToolCall {
                 id: "call_2".into(),
                 name: "bash".to_string(),
                 arguments: r#"{"command": "ls -la"}"#.into(),
+                thought_signature: None,
             },
             ToolCall {
                 id: "call_3".into(),
                 name: "grep".to_string(),
                 arguments: r#"{"pattern": "TODO", "path": "."}"#.into(),
+                thought_signature: None,
             },
         ];
 
@@ -4070,6 +4087,7 @@ mod tests {
                 id: "call_1".into(),
                 name: "read_file".to_string(),
                 arguments: r#"{"path": "/test.txt"}"#.into(),
+                thought_signature: None,
             }],
             model_id: Some("grok-3".to_string()),
             model_fingerprint: None,
@@ -4097,6 +4115,7 @@ mod tests {
                 id: "call_1".into(),
                 name: "bash".to_string(),
                 arguments: r#"{"command": "ls"}"#.into(),
+                thought_signature: None,
             }]),
         ]);
 
@@ -4131,6 +4150,7 @@ mod tests {
                 id: "call_1".into(),
                 name: "bash".to_string(),
                 arguments: r#"{"command": "ls"}"#.into(),
+                thought_signature: None,
             }]),
             ConversationItem::tool_result("call_1", "file1.txt\nfile2.txt\nfile3.txt"),
         ]);
@@ -4171,11 +4191,13 @@ mod tests {
                     id: "call_1".into(),
                     name: "bash".to_string(),
                     arguments: r#"{"command": "ls"}"#.into(),
+                    thought_signature: None,
                 },
                 ToolCall {
                     id: "call_2".into(),
                     name: "bash".to_string(),
                     arguments: r#"{"command": "pwd"}"#.into(),
+                    thought_signature: None,
                 },
             ]),
             ConversationItem::tool_result("call_1", "output1"),
@@ -4954,6 +4976,7 @@ mod tests {
             id: "call_1".into(),
             name: "complex_tool".to_string(),
             arguments: complex_args.into(),
+            thought_signature: None,
         };
 
         let item = ConversationItem::assistant_tool_calls(vec![tool_call]);
@@ -4986,6 +5009,7 @@ mod tests {
             id: "functions.search_replace:10".into(),
             name: "search_replace".to_string(),
             arguments: bad_args.into(),
+            thought_signature: None,
         };
 
         let item = ConversationItem::assistant_tool_calls(vec![tool_call]);
@@ -5011,6 +5035,7 @@ mod tests {
             id: "call_1".into(),
             name: "search_replace".to_string(),
             arguments: valid_args.into(),
+            thought_signature: None,
         };
 
         let item = ConversationItem::assistant_tool_calls(vec![tool_call]);
@@ -5030,6 +5055,7 @@ mod tests {
             id: "call_bad".into(),
             name: "search_replace".to_string(),
             arguments: bad_args.into(),
+            thought_signature: None,
         };
 
         let item = ConversationItem::assistant_tool_calls(vec![tool_call]);
@@ -5320,6 +5346,7 @@ mod tests {
                 id: "call_1".into(),
                 name: "read_file".to_string(),
                 arguments: r#"{"path": "src/main.rs"}"#.into(),
+                thought_signature: None,
             }]),
             ConversationItem::tool_result("call_1", "fn main() {}"),
             ConversationItem::assistant("I see the issue. Let me fix it."),
@@ -5328,6 +5355,7 @@ mod tests {
                 id: "call_2".into(),
                 name: "search_replace".to_string(),
                 arguments: "{}".into(),
+                thought_signature: None,
             }]),
         ];
 
@@ -5390,11 +5418,13 @@ mod tests {
                     id: "call_A".into(),
                     name: "grep".to_string(),
                     arguments: "{}".into(),
+                    thought_signature: None,
                 },
                 ToolCall {
                     id: "call_B".into(),
                     name: "read_file".to_string(),
                     arguments: "{}".into(),
+                    thought_signature: None,
                 },
             ]),
             // Only one of two tool results arrived
@@ -5463,6 +5493,7 @@ mod tests {
                     id: "call_1".into(),
                     name: "read_file".to_string(),
                     arguments: r#"{"path":"src/main.rs"}"#.into(),
+                    thought_signature: None,
                 }],
                 model_id: Some("messages-compatible-model".into()),
                 model_fingerprint: None,
@@ -5483,6 +5514,7 @@ mod tests {
                     id: "call_2".into(),
                     name: "search_replace".to_string(),
                     arguments: "{}".into(),
+                    thought_signature: None,
                 }],
                 model_id: Some("messages-compatible-model".into()),
                 model_fingerprint: None,
@@ -5746,6 +5778,7 @@ mod tests {
             id: "call_1".into(),
             name: "search_replace".to_string(),
             arguments: malformed.clone().into(),
+            thought_signature: None,
         };
         // Must not panic.
         let item = ConversationItem::assistant_tool_calls(vec![tool_call]);
@@ -5759,6 +5792,7 @@ mod tests {
             id: "call_2".into(),
             name: "search_replace".to_string(),
             arguments: bad_args.clone().into(),
+            thought_signature: None,
         };
         let item_valid = ConversationItem::assistant_tool_calls(vec![tool_call_valid]);
         let chat_msg_valid = conversation_item_to_chat_message(item_valid);
@@ -5811,6 +5845,7 @@ mod tests {
                 id: "call_1".into(),
                 name: "bash".to_string(),
                 arguments: "{}".into(),
+                thought_signature: None,
             }]),
             ConversationItem::tool_result("call_1", "result"),
             ConversationItem::assistant("Done"),
@@ -6203,6 +6238,7 @@ mod tests {
                     id: "call_1".into(),
                     name: "read_file".to_string(),
                     arguments: format!(r#"{{"target_file":"{worktree}/src/main.rs"}}"#).into(),
+                    thought_signature: None,
                 },
                 ToolCall {
                     id: "call_2".into(),
@@ -6210,6 +6246,7 @@ mod tests {
                     arguments: format!(
                         r#"{{"file_path":"{worktree}/src/lib.rs","old_string":"foo","new_string":"bar"}}"#
                     ).into(),
+                    thought_signature: None,
                 },
                 ToolCall {
                     id: "call_3".into(),
@@ -6217,6 +6254,7 @@ mod tests {
                     arguments: format!(
                         r#"{{"command":"cargo test --manifest-path {worktree}/Cargo.toml"}}"#
                     ).into(),
+                    thought_signature: None,
                 },
             ],
             model_id: None,
@@ -6341,6 +6379,7 @@ mod tests {
                     arguments: format!(
                         r#"{{"file_path":"{worktree}/src/main.rs","old_string":"fn main() {{}}","new_string":"fn main() {{\n    println!(\"Hello\");\n}}"}}"#
                     ).into(),
+                    thought_signature: None,
                 }],
                 model_id: None,
                 model_fingerprint: None,
@@ -6392,6 +6431,7 @@ mod tests {
                     id: "call_1".into(),
                     name: "read_file".to_string(),
                     arguments: format!(r#"{{"target_file":"{root}/src/main.rs"}}"#).into(),
+                    thought_signature: None,
                 }],
                 model_id: None,
                 model_fingerprint: None,
@@ -6500,6 +6540,7 @@ mod tests {
                 id: "call_1".into(),
                 name: "run_terminal_cmd".to_string(),
                 arguments: r#"{"command":"echo hello"}"#.into(),
+                thought_signature: None,
             }],
             model_id: None,
             model_fingerprint: None,
@@ -6527,11 +6568,13 @@ mod tests {
                 id: "call_1".into(),
                 name: "read_file".to_string(),
                 arguments: format!(r#"{{"target_file":"{worktree}/src/main.rs"}}"#).into(),
+                thought_signature: None,
             },
             ToolCall {
                 id: "call_2".into(),
                 name: "grep".to_string(),
                 arguments: format!(r#"{{"pattern":"TODO","path":"{worktree}/src"}}"#).into(),
+                thought_signature: None,
             },
         ])];
 
@@ -6597,6 +6640,7 @@ mod tests {
                 id: "1".into(),
                 name: "test".to_string(),
                 arguments: "{}".into(),
+                thought_signature: None,
             }])],
             stop_reason: None,
             usage: None,
@@ -6661,6 +6705,7 @@ mod tests {
                     id: "call_1".into(),
                     name: "read_file".to_string(),
                     arguments: "{}".into(),
+                    thought_signature: None,
                 }],
                 model_id: None,
                 model_fingerprint: None,
@@ -6687,11 +6732,13 @@ mod tests {
                     id: "1".into(),
                     name: "read_file".to_string(),
                     arguments: "{}".into(),
+                    thought_signature: None,
                 },
                 ToolCall {
                     id: "2".into(),
                     name: "bash".to_string(),
                     arguments: "{}".into(),
+                    thought_signature: None,
                 },
             ])],
             stop_reason: Some(StopReason::ToolCalls),
@@ -6788,6 +6835,7 @@ mod tests {
                 id: "1".into(),
                 name: "read_file".to_string(),
                 arguments: "{}".into(),
+                thought_signature: None,
             }])],
             stop_reason: Some(StopReason::ToolCalls),
             usage: None,
@@ -6908,6 +6956,7 @@ mod tests {
             id: "call_123".into(),
             name: "bash".to_string(),
             arguments: r#"{"command": "ls"}"#.into(),
+            thought_signature: None,
         };
 
         let json = serde_json::to_string(&tool_call).expect("Should serialize");
@@ -6946,6 +6995,7 @@ mod tests {
                     id: (*id).into(),
                     name: (*name).into(),
                     arguments: "{}".into(),
+                    thought_signature: None,
                 })
                 .collect(),
             model_id: None,
@@ -7534,6 +7584,7 @@ mod tests {
                 id: "call_1".into(),
                 name: "read_file".to_string(),
                 arguments: r#"{"target_file": "photo.png"}"#.into(),
+                thought_signature: None,
             }]),
             ConversationItem::tool_result_with_images(
                 "call_1",
@@ -7584,6 +7635,7 @@ mod tests {
                 id: "call_1".into(),
                 name: "bash".to_string(),
                 arguments: r#"{"command": "ls"}"#.into(),
+                thought_signature: None,
             }]),
             ConversationItem::tool_result("call_1", "file1.txt\nfile2.txt"),
         ]);
@@ -7649,6 +7701,7 @@ mod tests {
                     id: "call_1".into(),
                     name: "read_file".to_string(),
                     arguments: "{}".into(),
+                    thought_signature: None,
                 }],
                 model_id: None,
                 model_fingerprint: None,
@@ -8137,6 +8190,7 @@ mod tests {
             id: "tc1".into(),
             name: "read_file".into(),
             arguments: "{}".into(),
+            thought_signature: None,
         }]));
         assert!(resp.empty_reason().is_none());
         assert!(!resp.is_empty());
@@ -9392,6 +9446,7 @@ mod tests {
                     id: Arc::<str>::from("call_1"),
                     name: "read_file".to_string(),
                     arguments: Arc::<str>::from("{}"),
+                    thought_signature: None,
                 }],
                 model_id: None,
                 model_fingerprint: None,
@@ -9476,6 +9531,49 @@ mod tests {
             reasoning_items.len(),
             2,
             "both reasoning siblings must be present"
+        );
+    }
+
+    #[test]
+    fn tool_call_defaults_thought_signature_none() {
+        let tc = ToolCall {
+            id: Arc::<str>::from("id"),
+            name: "n".to_string(),
+            arguments: Arc::<str>::from("{}"),
+            thought_signature: None,
+        };
+        assert!(tc.thought_signature.is_none());
+    }
+
+    #[test]
+    fn assistant_tool_call_echoes_thought_signature_on_request() {
+        let item = ConversationItem::assistant_tool_calls(vec![ToolCall {
+            id: Arc::<str>::from("call_1"),
+            name: "search".to_string(),
+            arguments: Arc::<str>::from("{}"),
+            thought_signature: Some(Arc::<str>::from("SIG")),
+        }]);
+        let msg = conversation_item_to_chat_message(item);
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(
+            json.contains(r#""extra_content":{"google":{"thought_signature":"SIG"}}"#),
+            "request JSON missing echoed thought_signature: {json}"
+        );
+    }
+
+    #[test]
+    fn assistant_tool_call_without_signature_omits_extra_content() {
+        let item = ConversationItem::assistant_tool_calls(vec![ToolCall {
+            id: Arc::<str>::from("call_1"),
+            name: "search".to_string(),
+            arguments: Arc::<str>::from("{}"),
+            thought_signature: None,
+        }]);
+        let msg = conversation_item_to_chat_message(item);
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(
+            !json.contains("extra_content"),
+            "non-Gemini request must omit extra_content: {json}"
         );
     }
 }

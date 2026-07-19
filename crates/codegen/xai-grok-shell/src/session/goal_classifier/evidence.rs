@@ -1167,6 +1167,7 @@ mod tests {
                 id: "call_1".into(),
                 name: "update_goal".to_string(),
                 arguments: "{\"completed\":true}".into(),
+                thought_signature: None,
             }],
             model_id: None,
             model_fingerprint: None,

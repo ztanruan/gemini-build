@@ -70,10 +70,12 @@ pub fn stream_chat_completions<'a>(
         let mut content_acc = String::new();
         let mut reasoning_acc = String::new();
         // Tool call deltas keyed by positional index. Each entry is
-        // (id, name, arguments_buffer); the first chunk for an index
-        // carries id+name and starts the arguments buffer, subsequent
-        // chunks append to arguments only.
-        let mut tool_call_acc: BTreeMap<u32, (String, String, String)> = BTreeMap::new();
+        // (id, name, arguments_buffer, thought_signature); the first chunk
+        // for an index carries id+name and starts the arguments buffer,
+        // subsequent chunks append to arguments only. Gemini attaches a
+        // thought_signature that must be echoed back on the next request.
+        let mut tool_call_acc: BTreeMap<u32, (String, String, String, Option<String>)> =
+            BTreeMap::new();
 
         // Index counter spanning text + reasoning chunks (matches the
         // shell's chunk_index used for notification correlation).
@@ -199,7 +201,7 @@ pub fn stream_chat_completions<'a>(
 
                     let entry = tool_call_acc
                         .entry(tc_delta.index)
-                        .or_insert_with(|| (String::new(), String::new(), String::new()));
+                        .or_insert_with(|| (String::new(), String::new(), String::new(), None));
 
                     let mut id_for_event: Option<String> = None;
                     let mut name_for_event: Option<String> = None;
@@ -218,6 +220,12 @@ pub fn stream_chat_completions<'a>(
                             entry.2.push_str(&args);
                             args_for_event = Some(args);
                         }
+                    }
+                    if let Some(extra) = tc_delta.extra_content
+                        && let Some(g) = extra.google
+                        && let Some(sig) = g.thought_signature
+                    {
+                        entry.3 = Some(sig);
                     }
 
                     yield SamplingEvent::ToolCallDelta {
@@ -247,10 +255,11 @@ pub fn stream_chat_completions<'a>(
         // ── Build the final response ─────────────────────────────────
         let tool_calls: Vec<ToolCall> = tool_call_acc
             .into_values()
-            .map(|(id, name, arguments)| ToolCall {
+            .map(|(id, name, arguments, thought_signature)| ToolCall {
                 id: std::sync::Arc::<str>::from(id),
                 name,
                 arguments: std::sync::Arc::<str>::from(arguments),
+                thought_signature: thought_signature.map(std::sync::Arc::<str>::from),
             })
             .collect();
 
@@ -505,6 +514,7 @@ mod tests {
                     name: Some("do_thing".into()),
                     arguments: Some("{\"x\":".into()),
                 }),
+                extra_content: None,
             }],
             tool_call_id: None,
         }]);
@@ -521,6 +531,7 @@ mod tests {
                     name: None,
                     arguments: Some("1}".into()),
                 }),
+                extra_content: None,
             }],
             tool_call_id: None,
         }]);
@@ -770,5 +781,58 @@ mod tests {
             }
             other => panic!("expected Completed, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn tool_call_captures_and_carries_gemini_thought_signature() {
+        let tc_delta = ChunkToolCallDelta {
+            index: 0,
+            id: Some("call_1".into()),
+            function: Some(ToolCallFunctionDelta {
+                name: Some("search".into()),
+                arguments: Some("{}".into()),
+            }),
+            extra_content: Some(xai_grok_sampling_types::ToolCallExtraContent {
+                google: Some(xai_grok_sampling_types::GoogleToolCallExtra {
+                    thought_signature: Some("SIG".into()),
+                }),
+            }),
+            ..Default::default()
+        };
+        let chunk = make_chunk(vec![ChatChunkDelta {
+            role: Some(Role::Assistant),
+            content: None,
+            reasoning_content: None,
+            tool_calls: vec![tc_delta],
+            tool_call_id: None,
+        }]);
+        let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> =
+            vec![Ok(chunk), Ok(final_chunk(FinishReason::Stop))];
+        let raw = stream::iter(chunks).boxed();
+        let events = collect(stream_chat_completions(
+            raw,
+            None,
+            rid(),
+            Duration::from_secs(60),
+        ))
+        .await;
+
+        let sig = events
+            .iter()
+            .find_map(|e| match e {
+                SamplingEvent::Completed { response, .. } => Some(response),
+                _ => None,
+            })
+            .expect("Completed event")
+            .items
+            .iter()
+            .find_map(|it| match it {
+                ConversationItem::Assistant(a) => Some(a),
+                _ => None,
+            })
+            .and_then(|a| a.tool_calls.first())
+            .and_then(|tc| tc.thought_signature.as_deref())
+            .map(str::to_string);
+        assert_eq!(sig.as_deref(), Some("SIG"));
     }
 }

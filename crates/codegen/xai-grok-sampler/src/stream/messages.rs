@@ -351,6 +351,8 @@ pub fn stream_messages<'a>(
                                     id: std::sync::Arc::<str>::from(state.tool_id),
                                     name: state.tool_name,
                                     arguments: std::sync::Arc::<str>::from(state.args_acc),
+                                    // Anthropic (Claude) has no thought_signature.
+                                    thought_signature: None,
                                 });
                             }
                         }

@@ -365,6 +365,7 @@ pub(crate) mod hydrate {
                 id: std::sync::Arc::<str>::from(id),
                 name: tc.title.clone(),
                 arguments: std::sync::Arc::<str>::from(args),
+                thought_signature: None,
             });
 
             Vec::new()

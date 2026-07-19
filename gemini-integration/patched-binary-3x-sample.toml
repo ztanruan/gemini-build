@@ -1,0 +1,40 @@
+# Sample config for the PATCHED binary (Sub-project A / the vertex-native fork).
+#
+# This enables Gemini 3.x with full multi-step tool use. It ONLY works with a
+# binary built from this branch (the thought_signature round-trip patch) —
+# NOT the stock `grok` from x.ai (that still 400s on 3.x tool loops).
+#
+# VERIFIED 2026-07-18: gemini-3.1-pro-preview completed a shell -> write ->
+# read tool loop with no HTTP 400.
+#
+# For the stock/official binary, use config.toml (Gemini 2.5) instead.
+disable_web_search = true
+
+[auth]
+auth_provider_command = "~/.grok/gcp-token.sh"
+auth_provider_label   = "Google Cloud (Vertex AI)"
+auth_token_ttl        = 3300
+
+[models]
+default = "gemini-3.1-pro-preview"
+
+[model."gemini-3.1-pro-preview"]
+model          = "google/gemini-3.1-pro-preview"
+base_url       = "https://aiplatform.googleapis.com/v1beta1/projects/shutterstock-asset-processor/locations/global/endpoints/openapi"
+name           = "Gemini 3.1 Pro (preview)"
+api_backend    = "chat_completions"
+context_window = 1048576
+max_completion_tokens = 65536
+
+[model."gemini-3.5-flash"]
+model          = "google/gemini-3.5-flash"
+base_url       = "https://aiplatform.googleapis.com/v1beta1/projects/shutterstock-asset-processor/locations/global/endpoints/openapi"
+name           = "Gemini 3.5 Flash"
+api_backend    = "chat_completions"
+context_window = 1048576
+
+[cli]
+auto_update = false
+
+[features]
+telemetry = false

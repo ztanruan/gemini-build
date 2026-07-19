@@ -1,5 +1,6 @@
 # Launch-time Gemini model picker for Grok Build (arrow-key selector).
-# Installed to ~/.grok/grok-pick.zsh; install.sh adds the source line to ~/.zshrc.
+# Add to ~/.zshrc:   source ~/.grok/grok-pick.zsh
+# Then run:  grok
 #
 # Bare `grok` shows an interactive menu: Up/Down (or k/j) to move, Enter to
 # choose, Esc or q to cancel. Any invocation WITH arguments (grok -p "...",
@@ -14,13 +15,13 @@ grok() {
   fi
 
   local -a ids labels
-  # Current GA Gemini models on Vertex (July 2026). Keep in sync with config.toml.
-  ids=(gemini-3.1-pro gemini-3.5-flash gemini-3.1-flash-lite gemini-2.5-pro)
+  # Verified working on this project's Vertex (global) endpoint. Keep in sync with config.toml.
+  ids=(gemini-3.1-pro-preview gemini-3.5-flash gemini-3.1-flash-lite gemini-2.5-pro)
   labels=(
-    "Gemini 3.1 Pro          (flagship, best quality)"
-    "Gemini 3.5 Flash        (fast, newest)"
+    "Gemini 3.1 Pro          (preview, flagship)"
+    "Gemini 3.5 Flash        (newest, fast)"
     "Gemini 3.1 Flash-Lite   (cheapest, low latency)"
-    "Gemini 2.5 Pro          (legacy, retires Oct 2026)"
+    "Gemini 2.5 Pro          (stable)"
   )
   local n=${#ids} sel=1 i key k2 k3
 

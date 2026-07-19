@@ -439,6 +439,11 @@ pub struct ToolCallRequest {
     #[serde(rename = "type")]
     pub kind: ToolType,
     pub function: ToolCallFunction,
+    /// Provider extension echoed back to the model. Gemini requires its
+    /// `thought_signature` here on every follow-up turn or Vertex returns a
+    /// 400. `None` (and omitted from the wire) for all other providers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_content: Option<ToolCallExtraContent>,
 }
 
 impl ToolCallRequest {
@@ -447,11 +452,24 @@ impl ToolCallRequest {
             id: None,
             kind: ToolType::Function,
             function: ToolCallFunction::new(name, arguments),
+            extra_content: None,
         }
     }
 
     pub fn with_id(mut self, id: impl Into<String>) -> Self {
         self.id = Some(id.into());
+        self
+    }
+
+    /// Attach a Gemini `thought_signature` to echo back. No-op when `None`.
+    pub fn with_thought_signature(mut self, sig: Option<String>) -> Self {
+        if let Some(s) = sig {
+            self.extra_content = Some(ToolCallExtraContent {
+                google: Some(GoogleToolCallExtra {
+                    thought_signature: Some(s),
+                }),
+            });
+        }
         self
     }
 }
@@ -616,6 +634,25 @@ pub struct ToolCallDelta {
     /// The function name and/or argument fragment.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub function: Option<ToolCallFunctionDelta>,
+    /// Provider extension (Gemini `thought_signature`, etc.).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_content: Option<ToolCallExtraContent>,
+}
+
+/// Provider-specific extension on a tool call. Gemini returns a
+/// `thought_signature` here that MUST be echoed back on the next request
+/// or Vertex rejects the follow-up turn (HTTP 400). No-op for other providers.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ToolCallExtraContent {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub google: Option<GoogleToolCallExtra>,
+}
+
+/// Google/Gemini-specific tool-call extension fields.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct GoogleToolCallExtra {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 /// Streaming delta for function name/arguments within a tool call.
@@ -1517,5 +1554,24 @@ mod tests {
         let inner: &dyn TraceContext = &*cloned_trace;
         let downcast = inner.as_any().downcast_ref::<TestTrace>().unwrap();
         assert_eq!(downcast.0, "trace-data");
+    }
+
+    #[test]
+    fn tool_call_delta_captures_google_thought_signature() {
+        let json = r#"{
+            "index": 0,
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "search", "arguments": "{}"},
+            "extra_content": {"google": {"thought_signature": "SIG-ABC"}}
+        }"#;
+        let d: ToolCallDelta = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            d.extra_content
+                .and_then(|e| e.google)
+                .and_then(|g| g.thought_signature)
+                .as_deref(),
+            Some("SIG-ABC")
+        );
     }
 }

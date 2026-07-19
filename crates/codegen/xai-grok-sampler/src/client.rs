@@ -40,6 +40,38 @@ const DEFAULT_CLIENT_IDENTIFIER: &str = "grok-shell";
 const AGENT_PRODUCT: &str = "grok-shell";
 const ANTHROPIC_DEFAULT_MAX_TOKENS: u32 = 128_000;
 
+/// Anthropic version string Vertex AI requires in the request body for
+/// Claude-on-Vertex (Model Garden) instead of api.anthropic.com.
+const VERTEX_ANTHROPIC_VERSION: &str = "vertex-2023-10-16";
+
+/// True when a `messages`-backend base_url points at Vertex AI (Claude via
+/// Model Garden) rather than api.anthropic.com. Vertex uses a different URL
+/// shape and request body — see [`vertex_anthropic_endpoint`] / [`vertexize_messages_body`].
+pub(crate) fn is_vertex_anthropic_host(base_url: &str) -> bool {
+    base_url.contains("aiplatform.googleapis.com")
+}
+
+/// Vertex Claude endpoint: `{base}/{model}:{streamRawPredict|rawPredict}`.
+/// The base_url for such a model is `…/publishers/anthropic/models`.
+pub(crate) fn vertex_anthropic_endpoint(base_url: &str, model: &str, stream: bool) -> String {
+    let base = base_url.trim_end_matches('/');
+    let verb = if stream { "streamRawPredict" } else { "rawPredict" };
+    format!("{base}/{model}:{verb}")
+}
+
+/// Rewrite an Anthropic Messages body for Vertex: drop the `model` field (it
+/// lives in the URL) and inject the required `anthropic_version`.
+pub(crate) fn vertexize_messages_body(mut body: serde_json::Value) -> serde_json::Value {
+    if let Some(obj) = body.as_object_mut() {
+        obj.remove("model");
+        obj.insert(
+            "anthropic_version".to_string(),
+            serde_json::Value::String(VERTEX_ANTHROPIC_VERSION.to_string()),
+        );
+    }
+    body
+}
+
 /// Per-request `x-grok-*` headers. Optional fields are skipped when empty/`None`.
 struct GrokRequestHeaders<'a> {
     conv_id: &'a str,
@@ -1500,9 +1532,18 @@ impl SamplingClient {
             deployment_id: request.x_grok_deployment_id.as_deref(),
             user_id: request.x_grok_user_id.as_deref(),
         };
-        let http_request = grok_headers
-            .apply(self.post(self.endpoint("messages")))
-            .json(&request.inner);
+        // Claude-on-Vertex uses a different URL + body than api.anthropic.com.
+        let (endpoint, body) = if is_vertex_anthropic_host(&self.base_url) {
+            let b = serde_json::to_value(&request.inner).map_err(SamplingError::Serialization)?;
+            (
+                vertex_anthropic_endpoint(&self.base_url, &model_id, false),
+                vertexize_messages_body(b),
+            )
+        } else {
+            let b = serde_json::to_value(&request.inner).map_err(SamplingError::Serialization)?;
+            (self.endpoint("messages"), b)
+        };
+        let http_request = grok_headers.apply(self.post(endpoint)).json(&body);
 
         let response = http_request.send().await.map_err(|e| {
             tracing::debug!("HTTP request failed: {}", e);
@@ -1616,10 +1657,21 @@ impl SamplingClient {
             deployment_id: request.x_grok_deployment_id.as_deref(),
             user_id: request.x_grok_user_id.as_deref(),
         };
+        // Claude-on-Vertex uses a different URL + body than api.anthropic.com.
+        let (endpoint, body) = if is_vertex_anthropic_host(&self.base_url) {
+            let b = serde_json::to_value(&request.inner).map_err(SamplingError::Serialization)?;
+            (
+                vertex_anthropic_endpoint(&self.base_url, &model_id, true),
+                vertexize_messages_body(b),
+            )
+        } else {
+            let b = serde_json::to_value(&request.inner).map_err(SamplingError::Serialization)?;
+            (self.endpoint("messages"), b)
+        };
         let http_request = grok_headers
-            .apply(self.post(self.endpoint("messages")))
+            .apply(self.post(endpoint))
             .header(ACCEPT, HeaderValue::from_static("text/event-stream"))
-            .json(&request.inner);
+            .json(&body);
 
         let built_request = http_request.build().map_err(|e| {
             tracing::error!("Failed to build HTTP request: {}", e);
@@ -2741,5 +2793,40 @@ mod tests {
             event,
             rs::ResponseStreamEvent::ResponseOutputTextDelta(_)
         ));
+    }
+
+    #[test]
+    fn vertex_anthropic_host_detection() {
+        assert!(is_vertex_anthropic_host(
+            "https://us-east5-aiplatform.googleapis.com/v1/projects/p/locations/us-east5/publishers/anthropic/models"
+        ));
+        assert!(!is_vertex_anthropic_host("https://api.anthropic.com/v1"));
+    }
+
+    #[test]
+    fn vertex_anthropic_endpoint_shapes() {
+        let base = "https://us-east5-aiplatform.googleapis.com/v1/projects/p/locations/us-east5/publishers/anthropic/models";
+        assert_eq!(
+            vertex_anthropic_endpoint(base, "claude-sonnet-4-5", true),
+            format!("{base}/claude-sonnet-4-5:streamRawPredict")
+        );
+        assert_eq!(
+            vertex_anthropic_endpoint(base, "claude-sonnet-4-5", false),
+            format!("{base}/claude-sonnet-4-5:rawPredict")
+        );
+    }
+
+    #[test]
+    fn vertexize_body_drops_model_adds_version() {
+        let body = serde_json::json!({
+            "model": "claude-sonnet-4-5",
+            "max_tokens": 100,
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        let out = vertexize_messages_body(body);
+        assert!(out.get("model").is_none(), "model must be removed for Vertex");
+        assert_eq!(out["anthropic_version"], "vertex-2023-10-16");
+        assert_eq!(out["max_tokens"], 100);
+        assert!(out.get("messages").is_some());
     }
 }
