@@ -1379,6 +1379,7 @@ mod tests {
             id: id.into(),
             name: name.to_owned(),
             arguments: args.into(),
+                    thought_signature: None,
         }
     }
 

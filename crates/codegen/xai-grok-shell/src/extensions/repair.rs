@@ -193,6 +193,7 @@ mod tests {
                 id: "call_OK".into(),
                 name: "read_file".to_string(),
                 arguments: "{}".into(),
+                            thought_signature: None,
             }]),
             ConversationItem::tool_result("call_OK", "fine"),
         ]

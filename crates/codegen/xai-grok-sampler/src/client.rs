@@ -80,6 +80,29 @@ pub(crate) fn vertexize_messages_body(mut body: serde_json::Value) -> serde_json
     body
 }
 
+/// Compute the endpoint URL and JSON body for an Anthropic Messages request.
+/// For a Vertex host it uses the `streamRawPredict`/`rawPredict` shape and the
+/// vertexized body; otherwise the standard `{base}/messages` + unchanged body.
+/// Shared by the streaming and non-streaming messages paths so they can't drift.
+pub(crate) fn messages_request_target(
+    base_url: &str,
+    model_id: &str,
+    inner: serde_json::Value,
+    stream: bool,
+) -> (String, serde_json::Value) {
+    if is_vertex_anthropic_host(base_url) {
+        (
+            vertex_anthropic_endpoint(base_url, model_id, stream),
+            vertexize_messages_body(inner),
+        )
+    } else {
+        (
+            format!("{}/messages", base_url.trim_end_matches('/')),
+            inner,
+        )
+    }
+}
+
 /// Per-request `x-grok-*` headers. Optional fields are skipped when empty/`None`.
 struct GrokRequestHeaders<'a> {
     conv_id: &'a str,
@@ -1540,7 +1563,7 @@ impl SamplingClient {
         request.trace.take();
 
         tracing::debug!("create_message: {:?}", &request.inner);
-        tracing::debug!("endpoint: {:?}", self.endpoint("messages"));
+        tracing::debug!("base_url: {:?}", self.base_url);
 
         let grok_headers = GrokRequestHeaders {
             conv_id: x_grok_conv_id,
@@ -1553,17 +1576,11 @@ impl SamplingClient {
             user_id: request.x_grok_user_id.as_deref(),
         };
         // Claude-on-Vertex uses a different URL + body than api.anthropic.com.
-        let (endpoint, body) = if is_vertex_anthropic_host(&self.base_url) {
-            let b = serde_json::to_value(&request.inner).map_err(SamplingError::Serialization)?;
-            (
-                vertex_anthropic_endpoint(&self.base_url, &model_id, false),
-                vertexize_messages_body(b),
-            )
-        } else {
-            let b = serde_json::to_value(&request.inner).map_err(SamplingError::Serialization)?;
-            (self.endpoint("messages"), b)
-        };
-        let http_request = grok_headers.apply(self.post(endpoint)).json(&body);
+        let inner_value =
+            serde_json::to_value(&request.inner).map_err(SamplingError::Serialization)?;
+        let (endpoint, body) =
+            messages_request_target(&self.base_url, &model_id, inner_value, false);
+        let http_request = grok_headers.apply(self.post(endpoint.clone())).json(&body);
 
         let response = http_request.send().await.map_err(|e| {
             tracing::debug!("HTTP request failed: {}", e);
@@ -1579,7 +1596,6 @@ impl SamplingClient {
         if !status.is_success() {
             if status == reqwest::StatusCode::UNAUTHORIZED {
                 self.record_401_attribution(crate::attribution::SamplingConsumer::Messages);
-                let endpoint = self.endpoint("messages");
                 let server_message = parse_error_bytes(bytes.as_ref());
                 return Err(SamplingError::Auth(format!(
                     "Unauthorized (401) from {endpoint}: {server_message}"
@@ -1593,7 +1609,7 @@ impl SamplingClient {
             let message = self.build_api_error_message(
                 status,
                 &server_message,
-                &self.endpoint("messages"),
+                &endpoint,
                 &req_headers,
                 None,
             );
@@ -1635,7 +1651,9 @@ impl SamplingClient {
         name = "http.create_message_stream",
         skip_all,
         fields(
-            endpoint = %self.endpoint("messages"),
+            // base_url, not `/messages`: the real path is computed per-request
+            // (Vertex uses `:streamRawPredict`). Reported on the request/error lines.
+            base_url = %self.base_url,
             model_id = request.inner.model.as_str(),
             status_code = tracing::field::Empty,
             success = tracing::field::Empty,
@@ -1678,18 +1696,12 @@ impl SamplingClient {
             user_id: request.x_grok_user_id.as_deref(),
         };
         // Claude-on-Vertex uses a different URL + body than api.anthropic.com.
-        let (endpoint, body) = if is_vertex_anthropic_host(&self.base_url) {
-            let b = serde_json::to_value(&request.inner).map_err(SamplingError::Serialization)?;
-            (
-                vertex_anthropic_endpoint(&self.base_url, &model_id, true),
-                vertexize_messages_body(b),
-            )
-        } else {
-            let b = serde_json::to_value(&request.inner).map_err(SamplingError::Serialization)?;
-            (self.endpoint("messages"), b)
-        };
+        let inner_value =
+            serde_json::to_value(&request.inner).map_err(SamplingError::Serialization)?;
+        let (endpoint, body) =
+            messages_request_target(&self.base_url, &model_id, inner_value, true);
         let http_request = grok_headers
-            .apply(self.post(endpoint))
+            .apply(self.post(endpoint.clone()))
             .header(ACCEPT, HeaderValue::from_static("text/event-stream"))
             .json(&body);
 
@@ -1719,7 +1731,6 @@ impl SamplingClient {
             if status == reqwest::StatusCode::UNAUTHORIZED {
                 span.record("error", "unauthorized (401)");
                 self.record_401_attribution(crate::attribution::SamplingConsumer::MessagesStream);
-                let endpoint = self.endpoint("messages");
                 let server_message = response.text().await.unwrap_or_default();
                 return Err(SamplingError::Auth(format!(
                     "Unauthorized (401) from {endpoint}: {server_message}"
@@ -1737,7 +1748,7 @@ impl SamplingClient {
             let message = self.build_api_error_message(
                 status,
                 &server_message,
-                &self.endpoint("messages"),
+                &endpoint,
                 &req_headers,
                 Some(&resp_headers),
             );
@@ -2893,5 +2904,26 @@ mod tests {
             out2.messages[0].tool_calls[0].extra_content.is_some(),
             "thought_signature must be preserved for Gemini"
         );
+    }
+
+    #[test]
+    fn messages_request_target_vertex_vs_anthropic() {
+        let inner =
+            serde_json::json!({"model":"claude-sonnet-4-5","max_tokens":1,"messages":[]});
+        // Vertex host -> streamRawPredict URL + vertexized body (no model, +version)
+        let vbase = "https://us-east5-aiplatform.googleapis.com/v1/projects/p/locations/us-east5/publishers/anthropic/models";
+        let (url, body) = messages_request_target(vbase, "claude-sonnet-4-5", inner.clone(), true);
+        assert!(
+            url.ends_with("/claude-sonnet-4-5:streamRawPredict"),
+            "unexpected url: {url}"
+        );
+        assert!(body.get("model").is_none(), "Vertex body must drop model");
+        assert_eq!(body["anthropic_version"], "vertex-2023-10-16");
+        // Anthropic host -> {base}/messages + unchanged body
+        let (url2, body2) =
+            messages_request_target("https://api.anthropic.com/v1", "claude-x", inner, false);
+        assert_eq!(url2, "https://api.anthropic.com/v1/messages");
+        assert_eq!(body2["model"], "claude-sonnet-4-5");
+        assert!(body2.get("anthropic_version").is_none());
     }
 }

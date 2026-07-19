@@ -1545,7 +1545,8 @@ fn fork_filter_consecutive_users_with_tool_calls() {
         ConversationItem::system("sys"), ConversationItem::user("prefix"),
         ConversationItem::user("query"), ConversationItem::Assistant(AssistantItem {
         content : String::new().into(), tool_calls : vec![ToolCall { id : "tc1".into(),
-        name : "bash".into(), arguments : "{}".into(), }], model_id : None,
+        name : "bash".into(), arguments : "{}".into(),             thought_signature: None,
+        }], model_id : None,
         model_fingerprint : None, reasoning_effort : None, }),
         ConversationItem::tool_result("tc1", "output"),
         ConversationItem::user("follow-up"),
@@ -1562,7 +1563,8 @@ fn fork_filter_preserves_complete_tool_turn() {
     let mut items = vec![
         ConversationItem::user("q"), ConversationItem::Assistant(AssistantItem { content
         : String::new().into(), tool_calls : vec![ToolCall { id : "tc1".into(), name :
-        "bash".into(), arguments : "{}".into(), }], model_id : None, model_fingerprint :
+        "bash".into(), arguments : "{}".into(),             thought_signature: None,
+        }], model_id : None, model_fingerprint :
         None, reasoning_effort : None, }), ConversationItem::tool_result("tc1",
         "output"),
     ];
@@ -1576,7 +1578,8 @@ fn fork_filter_strips_incomplete_tool_turn() {
         ConversationItem::user("q1"), ConversationItem::assistant("a1"),
         ConversationItem::user("q2"), ConversationItem::Assistant(AssistantItem { content
         : String::new().into(), tool_calls : vec![ToolCall { id : "tc1".into(), name :
-        "bash".into(), arguments : "{}".into(), }], model_id : None, model_fingerprint :
+        "bash".into(), arguments : "{}".into(),             thought_signature: None,
+        }], model_id : None, model_fingerprint :
         None, reasoning_effort : None, }),
     ];
     super::fork_filter_chat(&mut items);
@@ -1685,7 +1688,8 @@ fn fork_filter_keeps_multi_tool_cycle_turn_with_reasoning() {
         ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item("plan",)),
         ConversationItem::Assistant(AssistantItem { content : String::new().into(),
         tool_calls : vec![ToolCall { id : "tc1".into(), name : "bash".into(), arguments :
-        "{}".into(), }], model_id : None, model_fingerprint : None, reasoning_effort :
+        "{}".into(),             thought_signature: None,
+        }], model_id : None, model_fingerprint : None, reasoning_effort :
         None, }), ConversationItem::tool_result("tc1", "output"),
         ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item("reflect",)),
         ConversationItem::assistant("final text"),
@@ -1710,8 +1714,10 @@ fn fork_filter_keeps_multi_tool_turn_with_reasoning_between_results() {
         ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item("plan",)),
         ConversationItem::Assistant(AssistantItem { content : String::new().into(),
         tool_calls : vec![ToolCall { id : "tc1".into(), name : "bash".into(), arguments :
-        "{}".into(), }, ToolCall { id : "tc2".into(), name : "grep".into(), arguments :
-        "{}".into(), },], model_id : None, model_fingerprint : None, reasoning_effort :
+        "{}".into(),             thought_signature: None,
+        }, ToolCall { id : "tc2".into(), name : "grep".into(), arguments :
+        "{}".into(),             thought_signature: None,
+        },], model_id : None, model_fingerprint : None, reasoning_effort :
         None, }), ConversationItem::tool_result("tc1", "out1"),
         ConversationItem::Reasoning(xai_grok_sampling_types::synthesized_reasoning_item("mid")),
         ConversationItem::tool_result("tc2", "out2"),

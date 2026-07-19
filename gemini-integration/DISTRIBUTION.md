@@ -67,7 +67,15 @@ new `SOURCE_REV`). To move the fork forward:
   empty turn that would stall the agent loop. Test: `content_filter_block_sets_stop_message`.
 - **Claude-on-Vertex dialect** (`client.rs`): the `messages` backend auto-switches to
   Vertex's `streamRawPredict` + `anthropic_version` shape when the base_url is an
-  `aiplatform.googleapis.com` host. Tests: `vertex_anthropic_*`, `vertexize_body_*`.
+  `aiplatform.googleapis.com` host. The URL/body decision is a single shared helper
+  (`messages_request_target`) used by both the streaming and non-streaming paths so they
+  can't drift. Tests: `messages_request_target_vertex_vs_anthropic`, `vertex_anthropic_*`,
+  `vertexize_body_*`.
+- **`api_backend` is auto-inferred from the model id / base_url** when the user omits it
+  (`agent/config.rs` `infer_api_backend`): `claude*` or an `publishers/anthropic` /
+  `api.anthropic.com` host → `messages`; everything else keeps the `chat_completions`
+  default. Removes the "wrong backend" footgun for hand-written config. Test:
+  `infer_api_backend_from_model_id_and_base_url`.
 
 ## Known limitations / not yet done
 

@@ -422,6 +422,7 @@ fn harness_pair(id: &str) -> Vec<xai_grok_sampling_types::conversation::Conversa
             id: id.into(),
             name: "task".into(),
             arguments: "{}".into(),
+                    thought_signature: None,
         }]),
         ConversationItem::tool_result(id, "<subagent_result>\nsubagent_id: skeptic-1"),
     ]

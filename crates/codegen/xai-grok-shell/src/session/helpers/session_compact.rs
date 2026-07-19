@@ -974,6 +974,7 @@ mod compacted_history_shape_tests {
                     id: "tc1".into(),
                     name: "read_file".into(),
                     arguments: r#"{"target_file": "src/auth.rs"}"#.into(),
+                                    thought_signature: None,
                 }],
                 model_id: None,
                 model_fingerprint: None,
@@ -985,7 +986,8 @@ mod compacted_history_shape_tests {
                 tool_calls: vec![ToolCall { id :
             "tc2".into(), name : "search_replace".into(), arguments :
             r#"{"file_path": "src/auth.rs", "old_string": "buggy", "new_string": "fixed"}"#
-            .into(), }],
+            .into(),                 thought_signature: None,
+            }],
                 model_id: None,
                 model_fingerprint: None,
                 reasoning_effort: None,
@@ -1150,6 +1152,7 @@ mod compacted_history_shape_tests {
                     id: "tc1".into(),
                     name: "read_file".into(),
                     arguments: r#"{"target_file": "src/auth.rs"}"#.into(),
+                                    thought_signature: None,
                 }],
                 model_id: None,
                 model_fingerprint: None,
@@ -1215,6 +1218,7 @@ mod compacted_history_shape_tests {
                 id: "call_OK".into(),
                 name: "edit".to_string(),
                 arguments: "{}".into(),
+                            thought_signature: None,
             }]),
             ConversationItem::tool_result("call_OK", "Tool call omitted..."),
             ConversationItem::user("summary"),

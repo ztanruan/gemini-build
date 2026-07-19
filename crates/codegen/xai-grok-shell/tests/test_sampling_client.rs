@@ -1278,6 +1278,7 @@ async fn test_multi_turn_conversation_with_tool_calls() {
             id: "call_1".into(),
             name: "read_file".to_string(),
             arguments: r#"{"path": "README.md"}"#.into(),
+                    thought_signature: None,
         }]),
         ConversationItem::tool_result("call_1", "# My Project\n\nThis is a test project."),
         // The model should now respond based on the file content
@@ -1311,6 +1312,7 @@ async fn test_responses_api_multi_turn_with_tool_calls() {
             id: "call_abc".into(),
             name: "read_file".to_string(),
             arguments: r#"{"path": "config.json"}"#.into(),
+                    thought_signature: None,
         }]),
         ConversationItem::tool_result("call_abc", r#"{"key": "value"}"#),
     ]);

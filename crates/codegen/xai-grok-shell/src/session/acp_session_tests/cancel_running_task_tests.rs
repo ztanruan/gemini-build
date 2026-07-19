@@ -1263,6 +1263,7 @@ async fn cancel_with_dangling_tool_call_skips_interrupt_reminder() {
                     id: "call-1".into(),
                     name: "run_terminal_cmd".into(),
                     arguments: "{}".into(),
+                                    thought_signature: None,
                 }]),
             );
             *actor

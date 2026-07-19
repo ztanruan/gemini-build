@@ -663,6 +663,7 @@ async fn harness_trace_drain_clears_buffer_even_with_uploads_disabled() {
                     id: "skeptic-1".into(),
                     name: "task".into(),
                     arguments: "{}".into(),
+                                    thought_signature: None,
                 }]),
                 ConversationItem::tool_result("skeptic-1", "<subagent_result>\nsubagent_id: x"),
             ]);

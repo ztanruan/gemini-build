@@ -557,6 +557,7 @@ fn over_budget_recap_serializes_to_well_formed_messages_request() {
         id: std::sync::Arc::from(id),
         name: "read_file".into(),
         arguments: std::sync::Arc::from("{}"),
+            thought_signature: None,
     };
 
     // Over-budget (window 8_000) conversation that ENDS in a tool run and carries
